@@ -6,7 +6,9 @@ local LibDD = LibStub:GetLibrary("LibUIDropDownMenu-4.0")
 local LibSerialize = LibStub("LibSerialize")
 local LibDeflate = LibStub("LibDeflate")
 local internalVersion = 7
-local NUM_ACTIONBAR_BUTTONS = 15 * 12
+local NUM_ACTIONBARS = 15
+local NUM_BUTTONS_PER_ACTIONBAR = 12
+local NUM_ACTIONBAR_BUTTONS = NUM_ACTIONBARS * NUM_BUTTONS_PER_ACTIONBAR
 local ITL_LOADOUT_NAME = "[ITL] Temp"
 
 local LDB = LibStub:GetLibrary("LibDataBroker-1.1")
@@ -302,6 +304,15 @@ function TalentLoadouts:CheckDBIntegrity()
     self.charDB.cachedActionbars = self.charDB.cachedActionbars or {}
 end
 
+-- @return { [int]: boolean } Dictionary of actionbar IDs to whether they are enabled or not
+local function actionBarsToLoadDefault()
+    local allIDs = {}
+    for ab = 1, NUM_ACTIONBARS do
+        allIDs[ab] = true
+    end
+    return allIDs
+end
+
 function TalentLoadouts:CheckForDBUpdates()
     ImprovedTalentLoadoutsDB.options = ImprovedTalentLoadoutsDB.options or {
         fontSize = ImprovedTalentLoadoutsDB.fontSize or 10,
@@ -326,6 +337,7 @@ function TalentLoadouts:CheckForDBUpdates()
         ["useAddOnLoadoutFallback"] = false,
         ["findMatchingLoadout"] = true,
         ["showCustomOrder"] = true,
+        ["actionBarsToLoad"] = actionBarsToLoadDefault(),
     }
 
     for key, defaultValue in pairs(optionKeys) do
@@ -675,11 +687,11 @@ local function CommitLoadout()
 
         if ImprovedTalentLoadoutsDB.options.applyLoadout then
             local canChange, _, changeError = C_ClassTalents.CanChangeTalents()
-            if not canChange then 
+            if not canChange then
                 if changeError == ERR_TALENT_FAILED_UNSPENT_TALENT_POINTS then
                     configInfo.error = true
                 end
-        
+
                 TalentLoadouts:OnLoadoutFail()
                 TalentLoadouts:Print("|cffff0000Can't load Loadout.|r", changeError)
                 return
@@ -750,7 +762,7 @@ local function LoadLoadout(self, configInfo, categoryInfo, forceBlizzardDisable)
             TalentLoadouts.pendingCategory = categoryInfo
             TalentLoadouts.lastUpdated = nil
             TalentLoadouts.lastUpdatedCategory = nil
-        
+
             TalentLoadouts:UpdateDropdownText()
             TalentLoadouts:UpdateDataObj()
 
@@ -779,7 +791,7 @@ local function LoadLoadout(self, configInfo, categoryInfo, forceBlizzardDisable)
 
         ResetTree(configInfo.treeIDs[1], configInfo.type)
         RunNextFrame(CommitLoadout)
-    
+
         TalentLoadouts:UpdateDropdownText()
         TalentLoadouts:UpdateDataObj()
     elseif C_Traits.GetConfigInfo(configID) then
@@ -1007,7 +1019,7 @@ function TalentLoadouts:ProcessCategoryImport(importString)
     if not decompressed then return end
     local success, data = LibSerialize:Deserialize(decompressed)
     if not success then return end
-    
+
     local categories = self.globalDB.categories[self.specID]
     if not categories then
         self.globalDB.categories[self.specID] = {}
@@ -1028,7 +1040,7 @@ end
 
 function TalentLoadouts:ImportCategory(data, isSubCategory, parentKey)
     local categories = self.globalDB.categories[self.specID]
-    if categories[data.key] then 
+    if categories[data.key] then
         data.key = GetAvailableCategoryKey(categories, data.key, 2)
     end
 
@@ -1424,7 +1436,7 @@ StaticPopupDialogs["TALENTLOADOUTS_LOADOUT_IMPORT_STRING_UPDATE"] = {
         if configInfo then
             local treeID = TalentLoadouts:GetTreeID()
             local entryInfo = CreateEntryInfoFromString(configID, importString, treeID)
-        
+
             if entryInfo then
                 if configID == self.charDB.lastLoadout then
                     self.charDB.lastLoadout = nil
@@ -1836,6 +1848,10 @@ local function LoadActionBar(self, configID)
     end
 end
 
+local function ActionBarIDFromSlotID(slotID)
+    return math.ceil(slotID / 12)
+end
+
 function TalentLoadouts:LoadActionBar(actionBars, name)
     if not actionBars then return end
 
@@ -1862,56 +1878,59 @@ function TalentLoadouts:LoadActionBar(actionBars, name)
 
     local printWarning = false
     for actionSlot = 1, NUM_ACTIONBAR_BUTTONS do
-        local slotInfo = data[actionSlot]
-        local currentType, currentID, currentSubType = GetActionInfo(actionSlot)
-        if slotInfo then
-            local pickedUp = false
-            ClearCursor()
-            if slotInfo.type == "spell" and (currentType ~= "spell" or slotInfo.id ~= currentID) then
-                C_Spell.PickupSpell(slotInfo.id)
-                pickedUp = true
-            elseif slotInfo.type == "macro" then
-                if slotInfo.macroType and self[slotInfo.macroType] and not self.duplicates[slotInfo.macroName] then
-                    local id = self[slotInfo.macroType][slotInfo.key]
-                    if not id then
-                        id = slotInfo.macroName and self[slotInfo.macroType][slotInfo.macroName]
-                    end
+        local actionBarID = ActionBarIDFromSlotID(actionSlot)
+        if ImprovedTalentLoadoutsDB.options.actionBarsToLoad[actionBarID] then
+            local slotInfo = data[actionSlot]
+            local currentType, currentID, currentSubType = GetActionInfo(actionSlot)
+            if slotInfo then
+                local pickedUp = false
+                ClearCursor()
+                if slotInfo.type == "spell" and (currentType ~= "spell" or slotInfo.id ~= currentID) then
+                    C_Spell.PickupSpell(slotInfo.id)
+                    pickedUp = true
+                elseif slotInfo.type == "macro" then
+                    if slotInfo.macroType and self[slotInfo.macroType] and not self.duplicates[slotInfo.macroName] then
+                        local id = self[slotInfo.macroType][slotInfo.key]
+                        if not id then
+                            id = slotInfo.macroName and self[slotInfo.macroType][slotInfo.macroName]
+                        end
 
-                    if id and id ~= currentID then
-                        PickupMacro(id)
-                        pickedUp = true
-                    elseif not id then
-                        self:Print("Please resave your action bars. Couldn't find macro: ", slotInfo.macroName, (slotInfo.body or ""):gsub("\n", " "))
+                        if id and id ~= currentID then
+                            PickupMacro(id)
+                            pickedUp = true
+                        elseif not id then
+                            self:Print("Please resave your action bars. Couldn't find macro: ", slotInfo.macroName, (slotInfo.body or ""):gsub("\n", " "))
+                        end
+                    elseif self.duplicates[slotInfo.macroName] then
+                        printWarning = true
                     end
-                elseif self.duplicates[slotInfo.macroName] then
-                    printWarning = true
+                elseif slotInfo.type == "summonmount" then
+                    local _, spellID = C_MountJournal.GetMountInfoByID(slotInfo.id)
+                    if spellID then
+                        C_Spell.PickupSpell(spellID)
+                    else
+                        C_MountJournal.Pickup(0)
+                    end
+                    pickedUp = true
+                elseif slotInfo.type == "companion" then
+                    C_Spell.PickupSpell(slotInfo.id)
+                    pickedUp = true
+                elseif slotInfo.type == "flyout" then
+                    C_SpellBook.PickupSpellBookItem(self.flyouts[slotInfo.id], Enum.SpellBookSpellBank.Player)
+                    pickedUp = true
+                elseif slotInfo.type == "item" then
+                    C_Item.PickupItem(slotInfo.id)
+                    pickedUp = true
                 end
-            elseif slotInfo.type == "summonmount" then
-                local _, spellID = C_MountJournal.GetMountInfoByID(slotInfo.id)
-                if spellID then
-                    C_Spell.PickupSpell(spellID)
-                else
-                    C_MountJournal.Pickup(0)
-                end
-                pickedUp = true
-            elseif slotInfo.type == "companion" then
-                C_Spell.PickupSpell(slotInfo.id)
-                pickedUp = true
-            elseif slotInfo.type == "flyout" then
-                C_SpellBook.PickupSpellBookItem(self.flyouts[slotInfo.id], Enum.SpellBookSpellBank.Player)
-                pickedUp = true
-            elseif slotInfo.type == "item" then
-                C_Item.PickupItem(slotInfo.id)
-                pickedUp = true
-            end
 
-            if pickedUp then
-                PlaceAction(actionSlot)
+                if pickedUp then
+                    PlaceAction(actionSlot)
+                    ClearCursor()
+                end
+            elseif ImprovedTalentLoadoutsDB.options.clearEmptySlots and not slotInfo and currentType then
+                PickupAction(actionSlot)
                 ClearCursor()
             end
-        elseif ImprovedTalentLoadoutsDB.options.clearEmptySlots and not slotInfo and currentType then
-            PickupAction(actionSlot)
-            ClearCursor()
         end
     end
 
@@ -2010,7 +2029,7 @@ function TalentLoadouts:AddSubCategoriesToImportDropdown(categoryInfo, currentSp
                 notCheckable = 1,
             },
         dropdownLevel)
-        
+
         if categoryInfo.categories and #categoryInfo.categories > 0 then
             self:AddSubCategoriesToImportDropdown(categoryInfo, currentSpecID, dropdownLevel, subCategoryLevel + 1)
         end
@@ -2033,7 +2052,7 @@ function TalentLoadouts:AddSubCategoriesToCreateDropdown(categoryInfo, currentSp
                 notCheckable = 1,
             },
         dropdownLevel)
-        
+
         if categoryInfo.categories and #categoryInfo.categories > 0 then
             self:AddSubCategoriesToCreateDropdown(categoryInfo, currentSpecID, dropdownLevel, subCategoryLevel + 1)
         end
@@ -2182,7 +2201,7 @@ local function LoadoutDropdownInitialize(frame, level, menu, ...)
         TalentLoadouts.globalDB.configIDs[currentSpecID] = TalentLoadouts.globalDB.configIDs[currentSpecID] or {}
         TalentLoadouts:UpdateLoadoutIterator()
         TalentLoadouts:UpdateCategoryIterator()
-        
+
         local needSeparator = false
         for _, categoryInfo in iterateCategories() do
             if not categoryInfo.isSubCategory then
@@ -2260,7 +2279,7 @@ local function LoadoutDropdownInitialize(frame, level, menu, ...)
                     menuList = "createLoadout"
                 },
             level)
-    
+
             LibDD:UIDropDownMenu_AddButton(
                 {
                     arg1 = 1,
@@ -2293,7 +2312,7 @@ local function LoadoutDropdownInitialize(frame, level, menu, ...)
                     menuList = "createLoadout"
                 },
             level)
-    
+
             LibDD:UIDropDownMenu_AddButton(
                 {
                     arg1 = 1,
@@ -2457,7 +2476,7 @@ local function LoadoutDropdownInitialize(frame, level, menu, ...)
                 menuList = hasCategory and "importLoadoutToCategory"
             },
         level)
-        
+
         LibDD:UIDropDownMenu_AddButton(
             {
                 value = 3,
@@ -2543,7 +2562,7 @@ local function LoadoutDropdownInitialize(frame, level, menu, ...)
                 end,
                 checked = function()
                     return ImprovedTalentLoadoutsDB.options.showSpecButtons
-                end 
+                end
             },
         level)
 
@@ -2818,6 +2837,37 @@ local function LoadoutDropdownInitialize(frame, level, menu, ...)
                 end
             },
         level)
+
+        LibDD:UIDropDownMenu_AddButton(
+            {
+                text = "Action Bars to Load",
+                notCheckable = 1,
+                minWidth = 170,
+                colorCode = "|cFFFFFFFF",
+                fontObject = dropdownFont,
+                hasArrow = true,
+                menuList = "actionBarsToLoad"
+            },
+            level)
+    elseif menu == "actionBarsToLoad" then
+        for actionBarID, _ in ipairs(actionBarsToLoadDefault()) do
+            LibDD:UIDropDownMenu_AddButton(
+                {
+                    text = actionBarID,
+                    isNotRadio = true,
+                    colorCode = "|cFFFFFFFF",
+                    fontObject = dropdownFont,
+                    func = function()
+                        ImprovedTalentLoadoutsDB.options.actionBarsToLoad[actionBarID] = not ImprovedTalentLoadoutsDB
+                            .options.actionBarsToLoad[actionBarID]
+                    end,
+                    keepShownOnClick = 1,
+                    checked = function()
+                        return ImprovedTalentLoadoutsDB.options.actionBarsToLoad[actionBarID]
+                    end
+                },
+                level)
+        end
     elseif menu == "globalLoadoutOptions" then
         LibDD:UIDropDownMenu_AddButton(
             {
@@ -2869,7 +2919,7 @@ local function LoadoutDropdownInitialize(frame, level, menu, ...)
                 end,
                 checked = function()
                     return ImprovedTalentLoadoutsDB.options.loadBlizzard
-                end 
+                end
             },
         level)
 
@@ -3435,7 +3485,7 @@ function TalentLoadouts:UpdateDropdownText()
         configInfo = self.pendingLoadout
     elseif self.charDB[currentSpecID] then
         configInfo = self.globalDB.configIDs[currentSpecID][self.charDB[currentSpecID]]
-    elseif self.charDB.lastLoadout then 
+    elseif self.charDB.lastLoadout then
         configInfo = self.globalDB.configIDs[currentSpecID][self.charDB.lastLoadout]
     end
     dropdownText = string.format("|cFF%s%s|r", color, configInfo and configInfo.name or "Unknown")
@@ -3476,7 +3526,7 @@ function TalentLoadouts:InitializeHooks()
               end
            end
         end
-        
+
         if customLoadouts and SimcEditBox then
            local hooked = true
            local text = SimcEditBox:GetText()
@@ -3489,13 +3539,13 @@ function TalentLoadouts:InitializeHooks()
            SimcEditBox:Insert(customLoadouts)
            SimcEditBox:HighlightText()
            SimcEditBox:SetFocus()
-           SimcEditBox:HookScript("OnTextChanged", function(self) 
+           SimcEditBox:HookScript("OnTextChanged", function(self)
                  if hooked then
                     self:SetText(text .. customLoadouts)
                     self:HighlightText()
                  end
            end)
-           
+
            SimcEditBox:HookScript("OnHide", function(self)
                  hooked = false
            end)
@@ -3542,7 +3592,7 @@ function TalentLoadouts.MenuLoadoutDropdownInitialize(ownerRegion, rootDescripti
     TalentLoadouts.globalDB.configIDs[currentSpecID] = TalentLoadouts.globalDB.configIDs[currentSpecID] or {}
     TalentLoadouts:UpdateLoadoutIterator()
     TalentLoadouts:UpdateCategoryIterator()
-    
+
     local needSeparator = false
     for _, categoryInfo in iterateCategories() do
         if not categoryInfo.isSubCategory then
@@ -3746,7 +3796,7 @@ function TalentLoadouts:InitializeDropdown()
         self.dropdown = dropdown
         LibDD:UIDropDownMenu_Initialize(dropdown, LoadoutDropdownInitialize)
         LibDD:UIDropDownMenu_SetAnchor(dropdown, 0, 16, "BOTTOM", dropdown.Middle, "CENTER")
-    
+
         if C_AddOns.IsAddOnLoaded('ElvUI') then
             -- Something is wrong here but I will swap to the new menu system soon so who cares
             dropdown:SetPoint("LEFT", talentFrame.SearchBox, "RIGHT", 30, 1)
@@ -3756,7 +3806,7 @@ function TalentLoadouts:InitializeDropdown()
             dropdown.Button:SetScale(0.8)
             ElvUI[1]:GetModule('Skins'):HandleDropDownBox(dropdown)
             ElvUI[1]:GetModule('Skins'):HandleNextPrevButton(dropdown.Button, 'down')
-            
+
         else
             dropdown:SetPoint("LEFT", talentFrame.SearchBox, "RIGHT", 0, 2)
             LibDD:UIDropDownMenu_SetAnchor(dropdown, 0, 16, "BOTTOM", dropdown.Middle, "CENTER")
@@ -3803,7 +3853,7 @@ local function CreateIconSpecButton(width, specIndex, numSpecializations, _, ico
     specButton:SetHighlightTexture(icon)
     specButton:SetSize(39.75, 39.75)
     specButton:SetPoint("LEFT", talentFrame.ResetButton , "RIGHT", (specIndex-1) * (width/2 + 1) + (width * (numSpecializations==3 and 1.25 or 1)), -2)
-    
+
     return specButton
 end
 
@@ -3830,13 +3880,13 @@ function TalentLoadouts:CreateSpecButtons(specButtonType)
                 SetSpecialization(specIndex)
             end
         end)
-        
+
         specButton:SetScript("OnEnter", function()
             GameTooltip:SetOwner(specButton, "ANCHOR_TOP")
             GameTooltip:AddLine("Change your specialization to " .. specName)
             GameTooltip:Show()
         end)
-        
+
         specButton:SetScript("OnLeave", function()
             GameTooltip:Hide()
         end)
@@ -3852,7 +3902,7 @@ function TalentLoadouts:InitializeButtons()
     self.saveButton = saveButton
     saveButton:SetSize(60, 28)
     saveButton:SetNormalAtlas("charactercreate-customize-dropdownbox")
-    --saveButton:SetHighlightAtlas("charactercreate-customize-dropdownbox-open")    
+    --saveButton:SetHighlightAtlas("charactercreate-customize-dropdownbox-open")
     saveButton:RegisterForClicks("LeftButtonDown")
     saveButton:SetPoint("LEFT", self.dropdown, "RIGHT", -15, 0)
     saveButton:SetText("Update")
@@ -3867,7 +3917,7 @@ function TalentLoadouts:InitializeButtons()
         GameTooltip:AddLine("Hold down CTRL to update the loadout + action bars")
         GameTooltip:Show()
     end)
-    
+
     saveButton:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
     end)
